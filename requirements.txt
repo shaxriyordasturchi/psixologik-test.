@@ -1,4 +1,3 @@
-streamlit
-pandas
-plotly
-sqlite3 ; only needed if using python < 3.0 (standard in modern Python)
+streamlit>=1.35.0
+pandas>=2.2.2
+sqlite3  # Bu aslida Python bilan birga keladi, lekin yozib qo‘yish zarar qilmaydi
