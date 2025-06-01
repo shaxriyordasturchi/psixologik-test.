@@ -1,35 +1,45 @@
 import sqlite3
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, ConversationHandler, MessageHandler, filters, CallbackQueryHandler
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler, ContextTypes, ConversationHandler,
+    MessageHandler, filters, CallbackQueryHandler
+)
 
 DB_NAME = "abonents.db"
 
 ADD_NAME = 1
 REMOVE_ID = 2
 
+# --- DB funksiyalar ---
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS abonents (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL
+        name TEXT NOT NULL,
+        chat_id INTEGER UNIQUE
     )
     """)
     conn.commit()
     conn.close()
 
-def add_abonent_to_db(name: str):
+def add_abonent_to_db(name: str, chat_id: int):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    cursor.execute("INSERT INTO abonents (name) VALUES (?)", (name,))
+    cursor.execute("SELECT id FROM abonents WHERE chat_id = ?", (chat_id,))
+    if cursor.fetchone():
+        conn.close()
+        return False
+    cursor.execute("INSERT INTO abonents (name, chat_id) VALUES (?, ?)", (name, chat_id))
     conn.commit()
     conn.close()
+    return True
 
 def get_all_abonents():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
-    cursor.execute("SELECT id, name FROM abonents")
+    cursor.execute("SELECT id, name, chat_id FROM abonents")
     results = cursor.fetchall()
     conn.close()
     return results
@@ -43,13 +53,13 @@ def remove_abonent_by_id(abonent_id: int):
     conn.close()
     return changes
 
-# /start va menyuni ko'rsatish
+# --- Bot komandalar ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("➕ Add Abonent", callback_data='addabonent')],
         [InlineKeyboardButton("📋 List Abonents", callback_data='listabonent')],
         [InlineKeyboardButton("❌ Remove Abonent", callback_data='removeabonent')],
-        [InlineKeyboardButton("❌ Cancel", callback_data='cancel')]
+        [InlineKeyboardButton("❌ Cancel", callback_data='cancel')],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     if update.message:
@@ -57,7 +67,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif update.callback_query:
         await update.callback_query.message.edit_text("Quyidagi amallardan birini tanlang:", reply_markup=reply_markup)
 
-# Inline tugma bosilganda chaqiriladigan funksiya
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -72,10 +81,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text("Hozircha abonentlar mavjud emas.")
         else:
             msg = "Abonentlar ro'yxati:\n"
-            for abonent_id, name in abonents:
+            for abonent_id, name, _ in abonents:
                 msg += f"{abonent_id}: {name}\n"
             await query.message.reply_text(msg)
-        # Menyuga qaytish
         await start(update, context)
         return ConversationHandler.END
     elif data == 'removeabonent':
@@ -83,23 +91,23 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return REMOVE_ID
     elif data == 'cancel':
         await query.message.reply_text("Amal bekor qilindi.")
-        # Menyuga qaytish
         await start(update, context)
         return ConversationHandler.END
 
-# Abonent ismini qabul qilish va DB ga yozish
 async def addabonent_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = update.message.text.strip()
+    chat_id = update.message.from_user.id
     if not name:
         await update.message.reply_text("Ism bo'sh bo'lishi mumkin emas. Qaytadan kiriting:")
         return ADD_NAME
-    add_abonent_to_db(name)
-    await update.message.reply_text(f"Abonent '{name}' muvaffaqiyatli qo'shildi.")
-    # Menyuga qaytish
+    added = add_abonent_to_db(name, chat_id)
+    if not added:
+        await update.message.reply_text(f"Abonent allaqachon ro'yxatda mavjud.")
+    else:
+        await update.message.reply_text(f"Abonent '{name}' muvaffaqiyatli qo'shildi.")
     await start(update, context)
     return ConversationHandler.END
 
-# Abonent ID ni qabul qilib o'chirish
 async def removeabonent_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_input = update.message.text.strip()
     if not user_input.isdigit():
@@ -111,7 +119,6 @@ async def removeabonent_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"Abonent ID {abonent_id} muvaffaqiyatli o'chirildi.")
     else:
         await update.message.reply_text(f"ID {abonent_id} ga ega abonent topilmadi.")
-    # Menyuga qaytish
     await start(update, context)
     return ConversationHandler.END
 
@@ -120,6 +127,42 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await start(update, context)
     return ConversationHandler.END
 
+# --- Qo'shimcha komandalar ---
+
+# /status komandasi
+async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    network_status = "Tarmoq holati: HAMMASI YAXSHI ✅\nHech qanday uzilish yoki xatoliklar yo‘q."
+    await update.message.reply_text(network_status)
+
+# /ogohlantirishlar komandasi
+async def ogohlantirishlar(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    alerts = [
+        "12:15 da Router 5 da uzilish yuz berdi.",
+        "13:40 da Switch 2 da paket yo'qotish kuzatildi.",
+        "14:05 da Server 3 bilan aloqada muammo."
+    ]
+    msg = "So‘nggi ogohlantirishlar:\n" + "\n".join(alerts)
+    await update.message.reply_text(msg)
+
+# /broadcast komandasi
+async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    ADMIN_ID = 123456789  # O'zingizning Telegram ID-ingizni yozing
+    if update.message.from_user.id !=7750409176:
+        await update.message.reply_text("Sizda bu komanda uchun ruxsat yo'q.")
+        return
+    text = " ".join(context.args)
+    if not text:
+        await update.message.reply_text("Iltimos, xabar matnini kiriting. Misol: /broadcast Xizmatda uzilish bor.")
+        return
+    abonents = get_all_abonents()
+    count = 0
+    for _, name, chat_id in abonents:
+        try:
+            await context.bot.send_message(chat_id=chat_id, text=f"⚠️ Ogohlantirish: {text}")
+            count += 1
+        except Exception as e:
+            print(f"Xatolik yuborishda: {e}")
+    await update.message.reply_text(f"{count} abonentga xabar yuborildi.")
 
 def main():
     init_db()
@@ -139,6 +182,11 @@ def main():
 
     application.add_handler(CommandHandler('start', start))
     application.add_handler(conv_handler)
+
+    # Qo'shimcha komandalar
+    application.add_handler(CommandHandler('status', status))
+    application.add_handler(CommandHandler('ogohlantirishlar', ogohlantirishlar))
+    application.add_handler(CommandHandler('broadcast', broadcast))
 
     application.run_polling()
 
