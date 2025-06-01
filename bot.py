@@ -1,153 +1,146 @@
 import sqlite3
-from datetime import datetime, timedelta
-from telegram import Update, ForceReply
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, ConversationHandler, MessageHandler, filters, CallbackQueryHandler
 
-# Ma'lumotlar bazasiga ulanish funksiyasi
-def get_connection():
-    return sqlite3.connect("telekom.db", check_same_thread=False)
+DB_NAME = "abonents.db"
 
-# So'rovlar funksiyalari
+ADD_NAME = 1
+REMOVE_ID = 2
 
-def top_caller():
-    conn = get_connection()
-    query = """
-    SELECT ism, familiya, COUNT(q.id) AS qongiroqlar_soni
-    FROM abonentlar a
-    JOIN chiquvchi_qongiroqlar q ON a.id = q.abonent_id
-    GROUP BY a.id
-    ORDER BY qongiroqlar_soni DESC
-    LIMIT 5
-    """
-    cursor = conn.execute(query)
-    natija = cursor.fetchall()
-    conn.close()
-    text = "📞 Eng ko'p qo'ng'iroq qilgan 5 abonent:\n"
-    for ism, familiya, soni in natija:
-        text += f"- {ism} {familiya}: {soni} qo'ng'iroq\n"
-    return text
-
-def top_tarif():
-    conn = get_connection()
-    query = """
-    SELECT tarif_rejasi, COUNT(*) AS soni
-    FROM abonentlar
-    GROUP BY tarif_rejasi
-    ORDER BY soni DESC
-    LIMIT 1
-    """
-    cursor = conn.execute(query)
-    natija = cursor.fetchone()
-    conn.close()
-    if natija:
-        return f"💼 Eng ko'p ishlatilgan tarif rejasi: {natija[0]} ({natija[1]} abonent)"
-    else:
-        return "Ma'lumot topilmadi."
-
-def users_by_region():
-    conn = get_connection()
-    query = """
-    SELECT hudud, COUNT(*) AS abonentlar_soni
-    FROM abonentlar
-    GROUP BY hudud
-    ORDER BY abonentlar_soni DESC
-    """
-    cursor = conn.execute(query)
-    natija = cursor.fetchall()
-    conn.close()
-    text = "📍 Hududlar bo'yicha abonentlar soni:\n"
-    for hudud, soni in natija:
-        text += f"- {hudud}: {soni}\n"
-    return text
-
-def search_by_name(name):
-    conn = get_connection()
-    query = """
-    SELECT ism, familiya, raqam, tarif_rejasi, hudud
-    FROM abonentlar
-    WHERE ism LIKE ?
-    """
-    cursor = conn.execute(query, ('%' + name + '%',))
-    natija = cursor.fetchall()
-    conn.close()
-    if not natija:
-        return f"🔍 '{name}' ismli abonent topilmadi."
-    text = f"🔍 '{name}' ismli abonentlar:\n"
-    for ism, familiya, raqam, tarif, hudud in natija:
-        text += f"- {ism} {familiya}, {raqam}, Tarif: {tarif}, Hudud: {hudud}\n"
-    return text
-
-def new_users_last_30_days():
-    conn = get_connection()
-    start_date = (datetime.today() - timedelta(days=30)).strftime('%Y-%m-%d')
-    query = """
-    SELECT ism, familiya, faollashtirilgan
-    FROM abonentlar
-    WHERE faollashtirilgan >= ?
-    ORDER BY faollashtirilgan DESC
-    """
-    cursor = conn.execute(query, (start_date,))
-    natija = cursor.fetchall()
-    conn.close()
-    if not natija:
-        return "🕒 Oxirgi 30 kunda ulangan abonent topilmadi."
-    text = "🕒 Oxirgi 30 kunda ulangan abonentlar:\n"
-    for ism, familiya, sana in natija:
-        text += f"- {ism} {familiya}, Faollashtirilgan: {sana}\n"
-    return text
-
-# Bot komandalariga javob berish
-
-def start(update: Update, context: CallbackContext) -> None:
-    update.message.reply_text(
-        "Salom! Telekom botga xush kelibsiz.\n\n"
-        "Quyidagi komandalarni ishlatishingiz mumkin:\n"
-        "/top_caller - Eng ko'p qo'ng'iroq qilgan abonentlar\n"
-        "/top_tarif - Eng ko'p ishlatilgan tarif\n"
-        "/region_users - Hududlar bo'yicha abonentlar\n"
-        "/search_name - Ism bo'yicha qidirish (misol: /search_name Ali)\n"
-        "/new_users - Oxirgi 30 kunda ulanganlar"
+def init_db():
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS abonents (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL
     )
+    """)
+    conn.commit()
+    conn.close()
 
-def top_caller_command(update: Update, context: CallbackContext) -> None:
-    text = top_caller()
-    update.message.reply_text(text)
+def add_abonent_to_db(name: str):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO abonents (name) VALUES (?)", (name,))
+    conn.commit()
+    conn.close()
 
-def top_tarif_command(update: Update, context: CallbackContext) -> None:
-    text = top_tarif()
-    update.message.reply_text(text)
+def get_all_abonents():
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, name FROM abonents")
+    results = cursor.fetchall()
+    conn.close()
+    return results
 
-def region_users_command(update: Update, context: CallbackContext) -> None:
-    text = users_by_region()
-    update.message.reply_text(text)
+def remove_abonent_by_id(abonent_id: int):
+    conn = sqlite3.connect(DB_NAME)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM abonents WHERE id = ?", (abonent_id,))
+    changes = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return changes
 
-def search_name_command(update: Update, context: CallbackContext) -> None:
-    if len(context.args) == 0:
-        update.message.reply_text("Iltimos, ismni kiriting. Misol: /search_name Ali")
-        return
-    name = ' '.join(context.args)
-    text = search_by_name(name)
-    update.message.reply_text(text)
+# /start va menyuni ko'rsatish
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = [
+        [InlineKeyboardButton("➕ Add Abonent", callback_data='addabonent')],
+        [InlineKeyboardButton("📋 List Abonents", callback_data='listabonent')],
+        [InlineKeyboardButton("❌ Remove Abonent", callback_data='removeabonent')],
+        [InlineKeyboardButton("❌ Cancel", callback_data='cancel')]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    if update.message:
+        await update.message.reply_text("Quyidagi amallardan birini tanlang:", reply_markup=reply_markup)
+    elif update.callback_query:
+        await update.callback_query.message.edit_text("Quyidagi amallardan birini tanlang:", reply_markup=reply_markup)
 
-def new_users_command(update: Update, context: CallbackContext) -> None:
-    text = new_users_last_30_days()
-    update.message.reply_text(text)
+# Inline tugma bosilganda chaqiriladigan funksiya
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+
+    data = query.data
+    if data == 'addabonent':
+        await query.message.reply_text("Iltimos, yangi abonent ismini kiriting:")
+        return ADD_NAME
+    elif data == 'listabonent':
+        abonents = get_all_abonents()
+        if not abonents:
+            await query.message.reply_text("Hozircha abonentlar mavjud emas.")
+        else:
+            msg = "Abonentlar ro'yxati:\n"
+            for abonent_id, name in abonents:
+                msg += f"{abonent_id}: {name}\n"
+            await query.message.reply_text(msg)
+        # Menyuga qaytish
+        await start(update, context)
+        return ConversationHandler.END
+    elif data == 'removeabonent':
+        await query.message.reply_text("O'chirish uchun abonent ID ni kiriting:")
+        return REMOVE_ID
+    elif data == 'cancel':
+        await query.message.reply_text("Amal bekor qilindi.")
+        # Menyuga qaytish
+        await start(update, context)
+        return ConversationHandler.END
+
+# Abonent ismini qabul qilish va DB ga yozish
+async def addabonent_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    name = update.message.text.strip()
+    if not name:
+        await update.message.reply_text("Ism bo'sh bo'lishi mumkin emas. Qaytadan kiriting:")
+        return ADD_NAME
+    add_abonent_to_db(name)
+    await update.message.reply_text(f"Abonent '{name}' muvaffaqiyatli qo'shildi.")
+    # Menyuga qaytish
+    await start(update, context)
+    return ConversationHandler.END
+
+# Abonent ID ni qabul qilib o'chirish
+async def removeabonent_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_input = update.message.text.strip()
+    if not user_input.isdigit():
+        await update.message.reply_text("Iltimos, faqat raqam kiriting.")
+        return REMOVE_ID
+    abonent_id = int(user_input)
+    deleted = remove_abonent_by_id(abonent_id)
+    if deleted:
+        await update.message.reply_text(f"Abonent ID {abonent_id} muvaffaqiyatli o'chirildi.")
+    else:
+        await update.message.reply_text(f"ID {abonent_id} ga ega abonent topilmadi.")
+    # Menyuga qaytish
+    await start(update, context)
+    return ConversationHandler.END
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Amal bekor qilindi.")
+    await start(update, context)
+    return ConversationHandler.END
+
 
 def main():
-    TOKEN = "7917375202:AAGhRKgMa9H9SYhyZR6mWXM1sjg5RBhTUx0"  # TOKENni shu yerga qo'ying
-    updater = Updater(TOKEN)
+    init_db()
+    BOT_TOKEN = "7917375202:AAGhRKgMa9H9SYhyZR6mWXM1sjg5RBhTUx0"
 
-    dispatcher = updater.dispatcher
+    application = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    dispatcher.add_handler(CommandHandler("start", start))
-    dispatcher.add_handler(CommandHandler("top_caller", top_caller_command))
-    dispatcher.add_handler(CommandHandler("top_tarif", top_tarif_command))
-    dispatcher.add_handler(CommandHandler("region_users", region_users_command))
-    dispatcher.add_handler(CommandHandler("search_name", search_name_command))
-    dispatcher.add_handler(CommandHandler("new_users", new_users_command))
+    conv_handler = ConversationHandler(
+        entry_points=[CallbackQueryHandler(button_handler, pattern='^(addabonent|removeabonent|listabonent|cancel)$')],
+        states={
+            ADD_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, addabonent_name)],
+            REMOVE_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, removeabonent_id)],
+        },
+        fallbacks=[CommandHandler('cancel', cancel)],
+        allow_reentry=True
+    )
 
-    updater.start_polling()
-    updater.idle()
+    application.add_handler(CommandHandler('start', start))
+    application.add_handler(conv_handler)
+
+    application.run_polling()
 
 if __name__ == '__main__':
     main()
