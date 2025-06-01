@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 ADD_NAME = 1
 REMOVE_ID = 2
 
-ADMIN_ID = 123456789  # O'zingizning Telegram IDingizni yozing
+ADMIN_ID = 7750409176  # O'zingizning Telegram IDingizni yozing
 
 # --- Bot komandalar ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -104,7 +104,7 @@ async def remove_abonent_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 async def broadcast_message_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.from_user.id != 7750409176:
+    if update.message.from_user.id !=  ADMIN_ID:
         await update.message.reply_text("Sizda bu komanda uchun ruxsat yo‘q.")
         return ConversationHandler.END
     text = update.message.text.strip()
